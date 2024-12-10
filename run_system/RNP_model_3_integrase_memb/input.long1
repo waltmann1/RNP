@@ -1,0 +1,56 @@
+variable TEMP           equal   300.0
+variable PRESS 		equal   0.0
+
+#variable SEED  		equal  	999
+variable SEED2   	equal   $( v_SEED + 1099 )
+variable SEED3  	equal   $( v_SEED + 80192 ) 
+variable SEED4  	equal   $( v_SEED + 7102 )
+variable SEED5 		equal   $( v_SEED + 30192 )
+
+include "system.init"
+read_data "eq.data"
+#read_restart "81.restart.20000000"
+include "system.settings"
+
+
+#comm_style tiled
+comm_modify mode single cutoff 50.0
+
+timestep  10.0 
+
+neighbor 12.0 bin
+
+compute 1 all pair srlr_gauss
+
+group int type 1:143
+
+fix 1  int    nve
+fix 2  int    langevin ${TEMP} ${TEMP} 100000.0 ${SEED3} zero yes
+#fix b1 all balance 25000 1.05 rcb
+
+#fix 3  all    cluster_switch 99 0 20.0 ${SEED2} rateFreq 500000 rateFile rates.txt contactFile contacts.txt
+
+
+thermo 5000 #500
+#thermo_style  custom  step spcpu  temp  ke pe etotal  epair c_1 lx ly lz  pxx pyy pzz f_3[1] f_3[2] f_3[3] f_3[4] f_3[5] f_3[6] f_3[7]
+
+dump 1 all atom 1000000 dump1.lammpsdump
+dump_modify 1 sort id
+
+restart 10000000 long1.restart
+
+label loopa
+variable a loop 100
+	fix 3 int cluster_switch 731  0 20.0 ${SEED2} rateFreq 1 rateFile rates.txt contactFile contacts.txt 
+	run 1
+	unfix 3 
+	run 499999
+next a
+jump input.long1 loopa
+
+
+#run 100000000
+
+#write_dump all atom eq.1.lammpstrj
+write_data eq.1.data
+
