@@ -156,7 +156,8 @@ class CGMolyComplex(object):
         from mscg import Trajectory
 
         cgt = Trajectory(tfile, fmt="lammpstrj")
-        cgt.read_frame()
+        for _ in range(frame+1):
+            cgt.read_frame()
         self.master_positions = cgt.x
         if keep_box:
             self.box = cgt.box

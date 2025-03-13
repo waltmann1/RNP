@@ -15,10 +15,12 @@ from MDAnalysis.analysis import distances
 
 class Analysis(object):
 
-    def __init__(self, data_file, traj_file, n_dimers=600, ca_length=134, no_ip6 = False, no_rnp=False):
+    def __init__(self, data_file, traj_file, n_dimers=600, ca_length=134, no_ip6 = False, no_rnp=False, format=None):
 
-
-        self.u = mda.Universe(data_file, traj_file)
+        if format is None:
+            self.u = mda.Universe(data_file, traj_file)
+        else:
+            self.u = mda.Universe(data_file, traj_file, format=format)
         #self.u = mda.Universe(data_file)
         n_dimers=0
         for ind, atom in enumerate(self.u.atoms):
@@ -191,7 +193,7 @@ class Analysis(object):
         return ads_cycle, un_cycle
 
 
-    def largest_subgraph(self, graph, min=4, ads_color=None, one=False):
+    def largest_subgraph(self, graph, min=12, ads_color=None, one=False):
 
         groups = list(nx.connected_components(graph))
 
@@ -351,6 +353,31 @@ class Analysis(object):
         f = open(self.abs_path("ads_clusters.txt"), "w")
         f.write(string)
         return groups
+
+    def get_all_heptamers(self, frame_number):
+        new_graph = cp.deepcopy(self.base_graph)
+        self.add_thirty_edges(frame_number, new_graph)
+
+        groups = list(nx.connected_components(new_graph))
+        string = ""
+        nodes = []
+        for ind, group in enumerate(groups):
+            if len(group) == 7:
+                neighbors = [len(list(new_graph.neighbors(thing))) for thing in group]
+                neighbors = np.array(neighbors)
+                if np.sum(neighbors) == 14 and len(set(neighbors)) == 1:
+                    nodes.append(group)
+                    options = [101, 30, 32, 131, 132]
+                    for thing in group:
+                        # for i in options:
+                        for i in range(134 * thing, 134 * (thing + 1) + 1, 33):
+                            string += str(i) + " "
+
+        string = "index " + string
+        f = open(self.abs_path("hepts.txt"), "w")
+        f.write(string)
+        return nodes
+
 
     def get_all_hexamers(self, frame_number):
 
@@ -965,6 +992,191 @@ class ReadOut(object):
 
         ch = ConvexHull(points)
         return ch.volume - (int(sa_correction) * 10 * ch.area)
+
+    def get_center_distance_distribution_capsid(self, frame):
+
+        all_hex_pos = self.frames[self.frame_numbers.index(frame)][self.letters.index("H")]
+        # hex_pos = [np.average(all_hex_pos[6*i: 6*(i+1)], axis=0)  for i in list(range(int(len(all_hex_pos)/(6 * self.beads_per_ca))))]
+        hex_pos = [np.average(all_hex_pos[6 * self.beads_per_ca * i: 6 * self.beads_per_ca * (i + 1)], axis=0) for i in
+                   list(range(int(len(all_hex_pos) / (6 * self.beads_per_ca))))]
+
+        all_pent_pos = self.frames[self.frame_numbers.index(frame)][self.letters.index("P")]
+        pent_pos = [np.average(all_pent_pos[5 * self.beads_per_ca * i: 5 * self.beads_per_ca * (i + 1)], axis=0) for i
+                    in
+                    list(range(int(len(all_pent_pos) / (5 * self.beads_per_ca))))]
+        points = hex_pos + pent_pos
+
+        center = np.average(points, axis=0)
+        distances = np.linalg.norm(np.subtract(points, center), axis=1)
+
+        return points, distances
+
+    def write_capsid_shape(self, frame_number):
+
+        points, dists = self.get_center_distance_distribution_capsid(frame_number)
+        f = open("out/center_dist.xyz", "w")
+        f.write(str(len(dists)) + "\n\n")
+        for i in range(len(points)):
+            f.write(self.xyz_string(i, points[i], int(dists[i])))
+        f.close()
+
+    def write_cylinder(self):
+
+        points, dists = self.get_cylinder_points()
+        f = open("out/cylinder.xyz", "w")
+        f.write(str(len(dists)) + "\n\n")
+        for i in range(len(points)):
+            f.write(self.xyz_string(i, points[i], int(dists[i])))
+        f.close()
+
+    def get_cylinder_points(self):
+        radius = 200
+        length = 500
+        spacing  = 1
+        circle_points = [[radius * np.cos(np.deg2rad( 15*i)), radius * np.sin(np.deg2rad(15*i)), 0]  for i in range(24)]
+        points=cp.deepcopy(circle_points)
+        for i in range(1,int(1 + length/spacing)):
+            points.extend(np.add(circle_points, [0,0,i*spacing]))
+            points.extend(np.add(circle_points, [0,0,-i*spacing]))
+        return points, np.linalg.norm(points, axis=1)
+
+    def xyz_string(self, count, pos, type):
+        for ind, dig in enumerate(pos):
+            if dig == 0:
+                dig = 0.00
+            pos[ind] = round(dig, 2)
+        return str(count) + " " + str(type) + " " + str(pos[0]) + " " + str(pos[1]) + " " + str(pos[2]) + "\n"
+
+
+    def graph_cylinder(self):
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
+
+        positions, dists = self.get_cylinder_points()
+        dists = np.divide(dists, 10)
+        # print(dists)
+        bin_width = 2
+        n_bins = int((max(dists) - min(dists)) / bin_width)
+        hist, bin_edges = np.histogram(dists, bins=n_bins)
+        hist = np.divide(hist, np.sum(hist))
+
+        bin_middles = [(bin_edges[i] + bin_edges[i + 1]) / 2 for i in range(len(hist))]
+
+        ax1.bar(bin_middles, hist, width=0.8 * bin_width)
+
+        # print("kurtosis:", kurtosis(hist))
+        # print("skew:", skew(hist))
+        # ax1.set_xlabel("Time ($10^6$ CG Timesteps)")
+        # ax1.set_ylabel("Units")
+        plt.legend()
+        plt.savefig("cylinder.png", bbox_inches="tight")
+        plt.show()
+    def graph_capsid_shape(self, frame):
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
+
+        positions, dists = self.get_center_distance_distribution_capsid(frame)
+        dists = np.divide(dists,10)
+        #print(dists)
+        bin_width = 2
+        n_bins = int((max(dists) - min(dists)) / bin_width)
+        hist, bin_edges = np.histogram(dists, bins=n_bins)
+        hist = np.divide(hist, np.sum(hist))
+
+        bin_middles = [(bin_edges[i] + bin_edges[i + 1]) / 2 for i in range(len(hist))]
+
+        ax1.bar(bin_middles, hist, width=0.8 * bin_width)
+
+        #print("kurtosis:", kurtosis(hist))
+        #print("skew:", skew(hist))
+        # ax1.set_xlabel("Time ($10^6$ CG Timesteps)")
+        # ax1.set_ylabel("Units")
+        plt.legend()
+        plt.savefig("shape_"+ str(frame) +".png", bbox_inches="tight")
+        plt.show()
+
+
+    def circular_variance(self, vectors):
+
+        vectors = [np.divide(v, np.linalg.norm(v)) for v in vectors]
+        v = vectors[0]
+        for i in range(1, len(vectors)):
+            v = np.add(v, vectors[i])
+        return 1 - (np.linalg.norm(v) /len(vectors))
+
+    def integrase_cv(self, frame):
+
+        total = 0
+        in_pos = self.frames[self.frame_numbers.index(frame)][self.letters.index("N")]
+        in_pos = [in_pos[i*4] for i in range(len(in_pos)) if i * 4 < len(in_pos)]
+
+        if len(self.frames[self.frame_numbers.index(frame)][self.letters.index("Nt")]) > 0:
+            in_pos = self.frames[self.frame_numbers.index(frame)][self.letters.index("Nt")]
+            #in_pos = [in_pos[i * 2] for i in range(len(in_pos)) if i * 2 < len(in_pos)]
+        #print(len(in_pos))
+        rnp_pos = (self.frames[self.frame_numbers.index(frame)][self.letters.index("R")] +
+                   self.frames[self.frame_numbers.index(frame)][self.letters.index("S")])
+
+        all_distances = distances.distance_array(np.array(in_pos), np.array(rnp_pos))
+        cut_off = 100
+        cvs = []
+        for i in range(len(in_pos)):
+            #print(in_pos[i])
+            #print(all_distances[i])
+            #print(np.argwhere(all_distances[i] < cut_off))
+            smaller = np.argwhere(all_distances[i] < cut_off)
+            cv = self.circular_variance(np.subtract([rnp_pos[s[0]] for s in smaller], in_pos[i]))
+            cvs.append(cv)
+        return cvs
+
+    def graph_circular_variance(self, frame):
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
+
+        cvs = self.integrase_cv(frame)
+        #print(dists)
+        bin_width = .1
+        n_bins = int(1 / bin_width)
+        hist, bin_edges = np.histogram(cvs, bins=n_bins, range=(0,1))
+        print(np.sum(hist[:6]), np.sum(hist))
+
+        bin_middles = [(bin_edges[i] + bin_edges[i + 1]) / 2 for i in range(len(hist))]
+
+        ax1.bar(bin_middles, hist, width=0.8 * bin_width)
+        plt.legend()
+        plt.savefig("int_cv_"+ str(frame) +".png", bbox_inches="tight")
+        plt.show()
+
+    def write_integrase_cv(self, frame_number):
+
+        dists = self.integrase_cv(frame_number)
+        points = self.frames[self.frame_numbers.index(frame_number)][self.letters.index("Nt")]
+        f = open("out/rnp_cv.xyz", "w")
+        f.write(str(len(dists)) + "\n\n")
+        for i in range(len(points)):
+            f.write(self.xyz_string(i, points[i], round(dists[i], 2) * 100))
+        f.close()
+
+    def graph_cv_integrase(self):
+
+        fig = plt.figure()
+        ax1 = fig.add_subplot(111)
+
+        hexamers = [np.sum(np.array(self.integrase_cv(frame)) < .6) for frame in self.frame_numbers]
+        #print(hexamers)
+        time = np.multiply(self.frame_numbers, 10)
+
+
+        ax1.plot(time, hexamers, label="Surface Integrase")
+        ax1.set_xlabel("Time ($10^6$ CG Timesteps)")
+        ax1.set_ylabel("Units")
+        plt.legend()
+        plt.savefig("cv_sin.png", bbox_inches="tight")
+        plt.show()
+
     def get_box(self, frame):
 
         box = cp.deepcopy(self.frames[self.frame_numbers.index(frame)][self.letters.index("B")])[-1]
@@ -995,7 +1207,7 @@ class ReadOut(object):
         in_pos = [in_pos[i * 4] for i in range(len(in_pos)) if i * 4 < len(in_pos)]
         if len(self.frames[self.frame_numbers.index(frame)][self.letters.index("Nt")]) > 0:
             in_pos = self.frames[self.frame_numbers.index(frame)][self.letters.index("Nt")]
-            in_pos = [in_pos[i * 2] for i in range(len(in_pos)) if i * 2 < len(in_pos)]
+            #in_pos = [in_pos[i * 2] for i in range(len(in_pos)) if i * 2 < len(in_pos)]
         # print(len(in_pos))
         on_pos = (self.frames[self.frame_numbers.index(frame)][self.letters.index("H")] +
                   self.frames[self.frame_numbers.index(frame)][self.letters.index("C")] +
@@ -1133,6 +1345,7 @@ class ReadOut(object):
 
         ax1.plot(time, hexamers, label="Hexamers")
         ax1.plot(time, pentamers, label="Pentamers")
+        ax1.set_ylim(0, 160)
         ax1.set_xlabel("Time ($10^6$ CG Timesteps)")
         ax1.set_ylabel("Units")
         plt.legend()
