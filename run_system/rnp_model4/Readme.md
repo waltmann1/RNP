@@ -1,0 +1,1 @@
+model with mobile integrase
